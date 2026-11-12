@@ -34,7 +34,7 @@ jobs:
       - name: Build frontend
         run: npm run build
         env:
-          VITE_API_BASE_URL: https://zenith-ai-api.onrender.com
+          VITE_API_BASE_URL: https://zenith-ai-api-x9c8.onrender.com
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:

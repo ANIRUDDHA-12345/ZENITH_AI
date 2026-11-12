@@ -27,7 +27,7 @@ The GitHub Pages site uses the `/ZENITH_AI/` project path. The included GitHub A
 
 The repository includes a Render Blueprint in `render.yaml` for the backend. It uses OpenRouter's OpenAI-compatible API and the currently listed free model `baidu/ernie-5.5-flash-preview:free`. Configure `AI_API_KEY` as a secret in Render; never commit it or put it in frontend variables. Free model access is rate-limited (currently 50 requests per day for accounts without purchased credits), model availability can change, and each model may have its own data terms. OpenRouter requires users to be at least 18 years old.
 
-The Pages workflow points the frontend to `https://zenith-ai-api.onrender.com`; update `VITE_API_BASE_URL` in `.github/workflows/deploy-pages.yml` if Render assigns a different URL. Set `VITE_BASE_PATH` if the site is hosted under a different path. The API accepts a comma-separated `CLIENT_ORIGIN` list so the deployed frontend origin and local preview can both connect.
+The Pages workflow points the frontend to `https://zenith-ai-api-x9c8.onrender.com`. Set `VITE_BASE_PATH` if the site is hosted under a different path. The API accepts a comma-separated `CLIENT_ORIGIN` list so the deployed frontend origin and local preview can both connect.
 
 ## Configure an AI provider
 
