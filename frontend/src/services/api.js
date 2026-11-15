@@ -1,4 +1,7 @@
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '');
+const defaultApiBaseUrl = import.meta.env.PROD
+  ? 'https://zenith-ai-api-x9c8.onrender.com'
+  : '';
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || defaultApiBaseUrl).replace(/\/+$/, '');
 
 export async function streamChat(messages, { signal, onText }) {
   const response = await fetch(`${apiBaseUrl}/api/chat`, {
