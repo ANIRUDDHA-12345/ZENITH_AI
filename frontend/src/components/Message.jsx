@@ -1,8 +1,32 @@
-import { Check, Copy, RotateCw, Pencil, AlertCircle } from 'lucide-react';
-import { useState } from 'react';
+import { Check, Copy, RotateCw, Pencil, AlertCircle, Paperclip } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
+import { readMedia } from '../utils/storage.js';
+
+function StoredImage({ mediaId, name }) {
+  const [url, setUrl] = useState('');
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let active = true;
+    let objectUrl;
+    readMedia(mediaId).then((blob) => {
+      if (!blob) throw new Error('Image not found');
+      objectUrl = URL.createObjectURL(blob);
+      if (active) setUrl(objectUrl);
+    }).catch(() => {
+      if (active) setFailed(true);
+    });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [mediaId]);
+  if (failed) return <span className="attachment-unavailable">Image unavailable in local storage</span>;
+  if (!url) return <span className="attachment-loading">Loading image…</span>;
+  return <a className="message-image-link" href={url} download={name} title="Download image"><img src={url} alt={name} /></a>;
+}
 
 function CodeBlock({ children, className }) {
   const [copied, setCopied] = useState(false);
@@ -44,9 +68,15 @@ export default function Message({ message, onCopy, onRegenerate, onEdit, isLastA
               },
             }}>{message.content || ''}</ReactMarkdown>}
         </div>
+        {!message.error && message.attachments?.length > 0 && <div className="message-attachments">
+          {message.attachments.map((attachment) => attachment.kind === 'image'
+            ? <StoredImage key={attachment.id} mediaId={attachment.mediaId} name={attachment.name} />
+            : <span className="message-document" key={attachment.id}><Paperclip size={13} />{attachment.name}</span>)}
+        </div>}
+        {!message.error && message.mediaId && <div className="generated-image"><StoredImage mediaId={message.mediaId} name={message.fileName ?? 'zenith-generated-image.webp'} /></div>}
         {!message.pending && (
           <div className="message-actions">
-            <button onClick={copyMessage} aria-label="Copy message">{copied ? <Check size={14} /> : <Copy size={14} />}</button>
+            {message.content && <button onClick={copyMessage} aria-label="Copy message">{copied ? <Check size={14} /> : <Copy size={14} />}</button>}
             {isUser && <button onClick={() => onEdit?.(message)} aria-label="Edit message"><Pencil size={14} /></button>}
             {!isUser && isLastAssistant && (message.error
               ? <button onClick={() => onRetry?.()} aria-label="Retry response"><RotateCw size={14} /></button>

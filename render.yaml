@@ -16,5 +16,9 @@ services:
         value: https://openrouter.ai/api/v1
       - key: AI_MODEL
         value: baidu/ernie-5.5-flash-preview:free
+      - key: AI_VISION_MODEL
+        value: google/gemini-4-hydrogen
+      - key: AI_IMAGE_MODEL
+        value: google/gemini-nano-banana-2.1
       - key: CLIENT_ORIGIN
         value: https://aniruddha-12345.github.io

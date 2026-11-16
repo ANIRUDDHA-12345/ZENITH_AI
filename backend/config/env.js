@@ -13,4 +13,6 @@ export const config = {
   apiKey: process.env.AI_API_KEY ?? '',
   baseUrl: (process.env.AI_BASE_URL ?? 'http://127.0.0.1:11434').replace(/\/+$/, ''),
   model: process.env.AI_MODEL ?? 'llama3.2:3b',
+  visionModel: process.env.AI_VISION_MODEL ?? 'google/gemini-4-hydrogen',
+  imageModel: process.env.AI_IMAGE_MODEL ?? 'google/gemini-nano-banana-2.1',
 };

@@ -25,7 +25,9 @@ The GitHub Pages site uses the `/ZENITH_AI/` project path. The included GitHub A
 
 ## Deploy the chat API to Render
 
-The repository includes a Render Blueprint in `render.yaml` for the backend. It uses OpenRouter's OpenAI-compatible API and the currently listed free model `baidu/ernie-5.5-flash-preview:free`. Configure `AI_API_KEY` as a secret in Render; never commit it or put it in frontend variables. Free model access is rate-limited (currently 50 requests per day for accounts without purchased credits), model availability can change, and each model may have its own data terms. OpenRouter requires users to be at least 18 years old.
+The repository includes a Render Blueprint in `render.yaml` for the backend. It uses OpenRouter's OpenAI-compatible API and the currently listed free model `baidu/ernie-5.5-flash-preview:free` for text chat. Configure `AI_API_KEY` as a secret in Render; never commit it or put it in frontend variables. Image attachments use `AI_VISION_MODEL` (`google/gemini-4-hydrogen` by default), and image generation uses `AI_IMAGE_MODEL` (`google/gemini-nano-banana-2.1` by default); those model requests may incur OpenRouter charges. Model availability and pricing can change, and each model may have its own data terms. OpenRouter requires users to be at least 18 years old.
+
+The chat composer accepts PNG, JPEG, and WebP images, plus PDF, DOCX, TXT, MD, CSV, and JSON documents. PDFs and DOCX files are converted to text in the browser; scanned PDFs without selectable text are not supported. Images are stored in the browser's IndexedDB and sent to the configured vision model only when included in a chat request.
 
 The Pages workflow points the frontend to `https://zenith-ai-api-x9c8.onrender.com`. Set `VITE_BASE_PATH` if the site is hosted under a different path. The API accepts a comma-separated `CLIENT_ORIGIN` list so the deployed frontend origin and local preview can both connect.
 
@@ -37,6 +39,8 @@ For local development, the backend uses Ollama's `llama3.2:3b` model at `http://
 AI_PROVIDER=openai-compatible
 AI_BASE_URL=https://openrouter.ai/api/v1
 AI_MODEL=baidu/ernie-5.5-flash-preview:free
+AI_VISION_MODEL=google/gemini-4-hydrogen
+AI_IMAGE_MODEL=google/gemini-nano-banana-2.1
 AI_API_KEY=your_openrouter_api_key
 CLIENT_ORIGIN=http://localhost:5173,https://your-site.example.com
 PORT=3001

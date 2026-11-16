@@ -20,6 +20,8 @@
     "express-rate-limit": "^8.0.1",
     "helmet": "^8.1.0",
     "lucide-react": "^0.468.0",
+    "mammoth": "^1.13.0",
+    "pdfjs-dist": "^4.10.38",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-markdown": "^10.1.0",

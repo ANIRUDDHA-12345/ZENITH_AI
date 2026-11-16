@@ -4,8 +4,35 @@ import { providerSetupError, streamCompletion } from '../services/aiProvider.js'
 
 const router = Router();
 const MAX_MESSAGES = 40;
-const MAX_CONTENT_LENGTH = 16_000;
+const MAX_CONTENT_LENGTH = 80_000;
+const MAX_IMAGE_BYTES = 2_000_000;
+const MAX_IMAGES_PER_MESSAGE = 4;
 const IDENTITY_INSTRUCTION = 'You are ZENITH AI, an AI assistant developed by Aniruddha K M. When asked who you are, say: "I am ZENITH AI, an AI assistant, developed by Aniruddha K M."';
+
+function validImageUrl(url) {
+  const match = typeof url === 'string' && /^data:image\/(?:jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/.exec(url);
+  return Boolean(match && match[1].length * 0.75 <= MAX_IMAGE_BYTES);
+}
+
+function validMessageContent(content, role) {
+  if (typeof content === 'string') return content.trim().length > 0 && content.length <= MAX_CONTENT_LENGTH;
+  if (role !== 'user' || !Array.isArray(content) || content.length === 0 || content.length > MAX_IMAGES_PER_MESSAGE + 1) return false;
+
+  let textLength = 0;
+  let imageCount = 0;
+  for (const part of content) {
+    if (part?.type === 'text' && typeof part.text === 'string') {
+      textLength += part.text.length;
+      if (textLength > MAX_CONTENT_LENGTH) return false;
+    } else if (part?.type === 'image_url' && typeof part.image_url?.url === 'string' && validImageUrl(part.image_url.url)) {
+      imageCount += 1;
+      if (imageCount > MAX_IMAGES_PER_MESSAGE) return false;
+    } else {
+      return false;
+    }
+  }
+  return textLength > 0;
+}
 
 router.post('/', async (req, res, next) => {
   const { messages } = req.body ?? {};
@@ -16,12 +43,10 @@ router.post('/', async (req, res, next) => {
   const valid = messages.every((message, index) =>
     message &&
     (['user', 'assistant'].includes(message.role) || (message.role === 'system' && index === 0)) &&
-    typeof message.content === 'string' &&
-    message.content.trim().length > 0 &&
-    message.content.length <= MAX_CONTENT_LENGTH,
+    validMessageContent(message.content, message.role),
   );
   if (!valid) {
-    res.status(400).json({ error: { code: 'INVALID_MESSAGE', message: 'Each message needs a valid role and text under 16,000 characters.' } });
+    res.status(400).json({ error: { code: 'INVALID_MESSAGE', message: 'Each message needs a valid role and text under 80,000 characters.' } });
     return;
   }
 

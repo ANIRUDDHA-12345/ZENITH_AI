@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { config } from './config/env.js';
 import chatRouter from './routes/chat.js';
+import imageRouter from './routes/images.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 
 const app = express();
@@ -33,7 +34,7 @@ app.use(cors({
     callback(new Error('Not allowed by CORS'));
   },
 }));
-app.use(express.json({ limit: '128kb' }));
+app.use(express.json({ limit: '12mb' }));
 app.use('/api', rateLimit({
   windowMs: 60_000,
   limit: 30,
@@ -46,6 +47,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', aiConfigured: config.provider === 'ollama' || Boolean(config.apiKey), provider: config.provider, model: config.model });
 });
 app.use('/api/chat', chatRouter);
+app.use('/api/images', imageRouter);
 app.use(notFoundHandler);
 app.use(errorHandler);
 

@@ -5,8 +5,9 @@ import Composer from './components/Composer.jsx';
 import Message from './components/Message.jsx';
 import PreferencesDialog from './components/PreferencesDialog.jsx';
 import Brand from './components/Brand.jsx';
-import { streamChat } from './services/api.js';
-import { readConversations, readPreferences, writeConversations, writePreferences } from './utils/storage.js';
+import { generateImage, streamChat } from './services/api.js';
+import { MAX_ATTACHMENTS, prepareAttachment } from './utils/attachments.js';
+import { deleteMedia, readConversations, readMediaDataUrl, readPreferences, saveMedia, writeConversations, writePreferences } from './utils/storage.js';
 
 const starterPrompts = [
   { icon: Atom, label: 'Explore an idea', prompt: 'Explain a fascinating idea that changed how people see the world.' },
@@ -28,6 +29,24 @@ function downloadConversation(conversation) {
   URL.revokeObjectURL(url);
 }
 
+async function toProviderMessage(message) {
+  const attachments = message.attachments ?? [];
+  if (!attachments.length) return { role: message.role, content: message.content };
+
+  const documentText = attachments
+    .filter((attachment) => attachment.kind === 'document')
+    .map((attachment) => `Attached document: ${attachment.name}\n${attachment.text}`);
+  const text = [message.content, ...documentText].filter(Boolean).join('\n\n');
+  const images = await Promise.all(attachments
+    .filter((attachment) => attachment.kind === 'image')
+    .map(async (attachment) => ({
+      type: 'image_url',
+      image_url: { url: await readMediaDataUrl(attachment.mediaId) },
+    })));
+  if (!images.length) return { role: message.role, content: text };
+  return { role: message.role, content: [{ type: 'text', text: text || 'Please review the attached image.' }, ...images] };
+}
+
 export default function App() {
   const [conversations, setConversations] = useState(readConversations);
   const [activeId, setActiveId] = useState(null);
@@ -37,6 +56,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(null);
   const [toast, setToast] = useState('');
+  const [pendingAttachments, setPendingAttachments] = useState([]);
+  const [composerMode, setComposerMode] = useState('chat');
   const bottomRef = useRef(null);
   const abortRef = useRef(null);
   const current = conversations.find((chat) => chat.id === activeId) ?? null;
@@ -62,6 +83,8 @@ export default function App() {
   function newConversation() {
     if (busy) abortRef.current?.abort();
     setEditing(null);
+    clearPendingAttachments();
+    setComposerMode('chat');
     setActiveId(null);
     setShowWorkspace(true);
   }
@@ -77,9 +100,10 @@ export default function App() {
       updatedAt: new Date().toISOString(),
     }));
     try {
-      const requestMessages = preferences.instructions.trim()
+      const requestHistory = preferences.instructions.trim()
         ? [{ role: 'system', content: preferences.instructions.trim() }, ...precedingMessages.slice(-39)]
         : precedingMessages.slice(-40);
+      const requestMessages = await Promise.all(requestHistory.map(toProviderMessage));
       await streamChat(requestMessages, {
         signal: controller.signal,
         onText: (chunk) => updateConversation(conversationId, (chat) => ({
@@ -114,44 +138,147 @@ export default function App() {
     }
   }, [preferences.instructions, updateConversation]);
 
-  async function sendMessage(text) {
-    if (!text.trim() || busy) return;
+  const runImageGeneration = useCallback(async (conversationId, prompt, attachments = []) => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setBusy(true);
+    const responseId = crypto.randomUUID();
+    updateConversation(conversationId, (chat) => ({
+      ...chat,
+      messages: [...chat.messages, { id: responseId, role: 'assistant', content: '', imageGeneration: true, pending: true, createdAt: new Date().toISOString() }],
+      updatedAt: new Date().toISOString(),
+    }));
+    try {
+      const referenceImages = await Promise.all(attachments
+        .filter((attachment) => attachment.kind === 'image')
+        .map((attachment) => readMediaDataUrl(attachment.mediaId)));
+      const dataUrl = await generateImage(prompt, { signal: controller.signal, referenceImages });
+      const response = await fetch(dataUrl);
+      if (!response.ok) throw new Error('The generated image could not be saved in this browser.');
+      const mediaId = await saveMedia(await response.blob());
+      const mediaType = dataUrl.slice(5, dataUrl.indexOf(';'));
+      const extension = mediaType === 'image/webp' ? 'webp' : mediaType === 'image/jpeg' ? 'jpg' : 'png';
+      updateConversation(conversationId, (chat) => ({
+        ...chat,
+        messages: chat.messages.map((message) => message.id === responseId
+          ? { ...message, content: '', mediaId, fileName: `zenith-ai-image.${extension}`, pending: false }
+          : message),
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        updateConversation(conversationId, (chat) => ({ ...chat, messages: chat.messages.filter((message) => message.id !== responseId) }));
+      } else {
+        updateConversation(conversationId, (chat) => ({
+          ...chat,
+          messages: chat.messages.map((message) => message.id === responseId
+            ? { ...message, content: error.message, pending: false, error: true }
+            : message),
+        }));
+      }
+    } finally {
+      setBusy(false);
+      abortRef.current = null;
+    }
+  }, [updateConversation]);
+
+  function removePendingAttachment(id) {
+    const attachment = pendingAttachments.find((item) => item.id === id);
+    if (attachment?.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    if (attachment?.mediaId) deleteMedia(attachment.mediaId).catch(() => setToast('Could not remove the image from local storage.'));
+    setPendingAttachments((items) => items.filter((item) => item.id !== id));
+  }
+
+  async function addAttachments(files, mode) {
+    const available = MAX_ATTACHMENTS - pendingAttachments.length;
+    if (available <= 0) {
+      setToast(`Attach up to ${MAX_ATTACHMENTS} files per message.`);
+      return;
+    }
+    for (const file of files.slice(0, available)) {
+      try {
+        const prepared = await prepareAttachment(file, mode);
+        const { blob, ...attachment } = prepared;
+        if (blob) {
+          attachment.mediaId = await saveMedia(blob);
+          attachment.previewUrl = URL.createObjectURL(blob);
+        }
+        setPendingAttachments((items) => [...items, attachment]);
+      } catch (error) {
+        setToast(error.message);
+      }
+    }
+    if (files.length > available) setToast(`Attach up to ${MAX_ATTACHMENTS} files per message.`);
+  }
+
+  function clearPendingAttachments() {
+    pendingAttachments.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      if (attachment.mediaId) deleteMedia(attachment.mediaId).catch(() => setToast('Could not remove an image from local storage.'));
+    });
+    setPendingAttachments([]);
+  }
+
+  async function sendMessage(text, attachmentsToSend = pendingAttachments, mode = composerMode) {
+    const trimmedText = text.trim();
+    if ((!trimmedText && !attachmentsToSend.length) || busy) return;
+    if (mode === 'image' && !trimmedText) {
+      setToast('Describe the image you want to create.');
+      return;
+    }
     setEditing(null);
     let chat = current;
     let prior = chat?.messages ?? [];
     if (editing) {
       const index = prior.findIndex((message) => message.id === editing.id);
-      prior = [...prior.slice(0, index), { ...editing, content: text, createdAt: new Date().toISOString() }];
-      updateConversation(chat.id, (item) => ({ ...item, title: item.messages.length < 2 ? text.slice(0, 42) : item.title, messages: prior, updatedAt: new Date().toISOString() }));
+      const savedAttachments = attachmentsToSend.map(({ previewUrl, ...attachment }) => attachment);
+      prior = [...prior.slice(0, index), { ...editing, content: trimmedText, attachments: [...(editing.attachments ?? []), ...savedAttachments], createdAt: new Date().toISOString() }];
+      updateConversation(chat.id, (item) => ({ ...item, title: item.messages.length < 2 ? trimmedText.slice(0, 42) : item.title, messages: prior, updatedAt: new Date().toISOString() }));
     } else {
       if (!chat) {
         chat = makeConversation();
-        chat.title = text.slice(0, 42);
+        chat.title = trimmedText.slice(0, 42);
         setActiveId(chat.id);
         setConversations((items) => [chat, ...items]);
       } else {
-        const title = chat.messages.length === 0 ? text.slice(0, 42) : chat.title;
+        const title = chat.messages.length === 0 ? trimmedText.slice(0, 42) : chat.title;
         chat = { ...chat, title };
       }
-      const userMessage = { id: crypto.randomUUID(), role: 'user', content: text, createdAt: new Date().toISOString() };
+      const savedAttachments = attachmentsToSend.map(({ previewUrl, ...attachment }) => attachment);
+      const userMessage = { id: crypto.randomUUID(), role: 'user', content: trimmedText || 'Please review the attached files.', attachments: savedAttachments, createdAt: new Date().toISOString() };
       prior = [...(chat.messages ?? []), userMessage];
       updateConversation(chat.id, (item) => ({ ...item, title: chat.title, messages: prior, updatedAt: new Date().toISOString() }));
     }
-    await runAssistant(chat.id, prior.map(({ role, content }) => ({ role, content })));
+    attachmentsToSend.forEach((attachment) => {
+      if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+    });
+    setPendingAttachments([]);
+    if (mode === 'image') await runImageGeneration(chat.id, trimmedText, attachmentsToSend);
+    else await runAssistant(chat.id, prior);
   }
 
   async function retryResponse() {
     if (!current || busy) return;
     const preceding = messages.slice(0, -1);
     updateConversation(current.id, (chat) => ({ ...chat, messages: preceding }));
-    await runAssistant(current.id, preceding.map(({ role, content }) => ({ role, content })));
+    if (messages[messages.length - 1]?.imageGeneration) {
+      const lastUserMessage = preceding[preceding.length - 1];
+      await runImageGeneration(current.id, lastUserMessage.content, lastUserMessage.attachments ?? []);
+    } else {
+      await runAssistant(current.id, preceding);
+    }
   }
 
   async function regenerateResponse() {
     if (!current || busy) return;
     const preceding = messages.slice(0, -1);
     updateConversation(current.id, (chat) => ({ ...chat, messages: preceding }));
-    await runAssistant(current.id, preceding.map(({ role, content }) => ({ role, content })));
+    if (messages[messages.length - 1]?.imageGeneration) {
+      const lastUserMessage = preceding[preceding.length - 1];
+      await runImageGeneration(current.id, lastUserMessage.content, lastUserMessage.attachments ?? []);
+    } else {
+      await runAssistant(current.id, preceding);
+    }
   }
 
   function editMessage(message) {
@@ -237,16 +364,17 @@ export default function App() {
                 <div className="starter-grid">{starterPrompts.map(({ icon: Icon, label, prompt }) => <button key={label} onClick={() => sendMessage(prompt)}><Icon size={17} /><span>{label}</span><ArrowRight size={14} /></button>)}</div>
               </section> : <section className="message-list" aria-live="polite">
                 {messages.map((message, index) => <Message key={message.id} message={message} isLastAssistant={index === messages.length - 1 && message.role === 'assistant'} onEdit={editMessage} onRetry={retryResponse} onRegenerate={regenerateResponse} />)}
-                {busy && messages[messages.length - 1]?.pending && !messages[messages.length - 1]?.content && <div className="typing-indicator"><span /><span /><span /> <small>ZENITH is thinking</small></div>}
+                {busy && messages[messages.length - 1]?.pending && !messages[messages.length - 1]?.content && <div className="typing-indicator"><span /><span /><span /> <small>{messages[messages.length - 1]?.imageGeneration ? 'Creating your image' : 'ZENITH is thinking'}</small></div>}
                 <div ref={bottomRef} />
               </section>}
             </div>
             <div className="composer-dock">
               {editing && <div className="editing-banner"><span>Editing your message</span><button onClick={() => setEditing(null)} aria-label="Cancel edit">Cancel</button></div>}
               <Composer key={editing?.id ?? 'new-composer'} onSend={sendMessage} onStop={() => abortRef.current?.abort()} busy={busy} initialValue={editing?.content ?? ''}
-                onAttachment={() => setToast('File attachments are not available yet.')}
+                attachments={pendingAttachments} mode={composerMode} onModeChange={setComposerMode}
+                onAttachment={addAttachments} onRemoveAttachment={removePendingAttachment}
                 onVoice={() => setToast('Voice input is not available yet.')} />
-              <p className="composer-disclaimer">ZENITH AI can make mistakes. Check important information.</p>
+              <p className="composer-disclaimer">{composerMode === 'image' ? 'Image generation uses your configured OpenRouter model and may incur provider charges.' : 'ZENITH AI can make mistakes. Check important information.'}</p>
             </div>
           </main>
           {preferences.settingsOpen && <PreferencesDialog preferences={preferences} onChange={(next) => setPreferences((currentPreferences) => ({ ...currentPreferences, theme: next.theme, instructions: next.instructions }))} onClose={() => setPreferences((currentPreferences) => ({ ...currentPreferences, settingsOpen: false }))} />}

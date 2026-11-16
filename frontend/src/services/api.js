@@ -43,3 +43,38 @@ export async function streamChat(messages, { signal, onText }) {
     }
   }
 }
+export async function generateImage(prompt, { signal, referenceImages = [] } = {}) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 180_000);
+  const abortRequest = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abortRequest();
+  else signal?.addEventListener('abort', abortRequest, { once: true });
+
+  try {
+    const response = await fetch(`${apiBaseUrl}/api/images/generate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt, referenceImages }),
+      signal: controller.signal,
+    });
+
+    let payload;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new Error('The image server returned an unreadable response.');
+    }
+    if (!response.ok) throw new Error(payload.error?.message ?? `Image request failed (${response.status}). Please try again.`);
+    if (typeof payload.image !== 'string' || !payload.image.startsWith('data:image/')) {
+      throw new Error('The server did not return a generated image.');
+    }
+    return payload.image;
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    if (controller.signal.aborted) throw new Error('Image generation timed out. Check provider availability and try again.');
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+    signal?.removeEventListener('abort', abortRequest);
+  }
+}
