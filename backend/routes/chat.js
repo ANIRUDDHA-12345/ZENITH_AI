@@ -5,6 +5,7 @@ import { providerSetupError, streamCompletion } from '../services/aiProvider.js'
 const router = Router();
 const MAX_MESSAGES = 40;
 const MAX_CONTENT_LENGTH = 16_000;
+const IDENTITY_INSTRUCTION = 'You are ZENITH AI, an AI assistant developed by Aniruddha K M. When asked who you are, say: "I am ZENITH AI, an AI assistant, developed by Aniruddha K M."';
 
 router.post('/', async (req, res, next) => {
   const { messages } = req.body ?? {};
@@ -30,13 +31,18 @@ router.post('/', async (req, res, next) => {
     return;
   }
 
+  const systemMessage = messages[0]?.role === 'system' ? messages[0] : null;
+  const messagesWithIdentity = systemMessage
+    ? [{ ...systemMessage, content: `${systemMessage.content}\n\n${IDENTITY_INSTRUCTION}` }, ...messages.slice(1)]
+    : [{ role: 'system', content: IDENTITY_INSTRUCTION }, ...messages];
+
   const abortController = new AbortController();
   res.on('close', () => {
     if (!res.writableEnded) abortController.abort();
   });
 
   try {
-    const upstream = await streamCompletion(messages, abortController.signal);
+    const upstream = await streamCompletion(messagesWithIdentity, abortController.signal);
     res.status(200).set({
       'content-type': 'text/event-stream; charset=utf-8',
       'cache-control': 'no-cache, no-transform',
